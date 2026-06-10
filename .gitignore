@@ -1,0 +1,7 @@
+node_modules
+.env
+
+# 로그/임시 파일
+npm-debug.log*
+*.log
+.DS_Store
