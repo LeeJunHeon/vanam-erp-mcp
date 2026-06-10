@@ -97,6 +97,42 @@ const TOOLS = [
       required: ["itemId"],
     },
   },
+  {
+    name: "list_categories",
+    description:
+      "재고 품목의 카테고리(분류) 목록과 부모-자식 계층 구조를 조회한다. 인자가 필요 없다. 예: '카테고리 뭐뭐 있어?', '분류 보여줘'. 각 카테고리의 id, 이름, 부모 관계를 반환한다.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "list_inbound_lots",
+    description:
+      "특정 품목의 입고 건별 잔여 수량(어느 입고분이 얼마나 남았는지)을 조회한다. 품목 id가 필요하다(search_items로 먼저 찾을 것). 예: 'VO2 2인치 입고 내역 보여줘', '이 품목 어느 입고분이 남았어?'. 입고번호(txNo), 입고일, 잔여수량, 위치 등을 반환한다. 단순 총 재고량만 알고 싶으면 get_stock을 써라.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        itemId: {
+          type: "number",
+          description: "품목 id",
+        },
+      },
+      required: ["itemId"],
+    },
+  },
+  {
+    name: "lookup_barcode",
+    description:
+      "바코드 문자열로 품목 정보를 조회한다. 예: 바코드 'T2VO20125-69-50'이 무슨 품목인지 확인. 품목 id, 코드, 이름, 카테고리, 입고참조번호(refTxNo)를 반환한다.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        code: {
+          type: "string",
+          description: "바코드 문자열",
+        },
+      },
+      required: ["code"],
+    },
+  },
 ];
 
 // 텍스트 응답 헬퍼
@@ -168,6 +204,133 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return textResult(
         `재고 조회 결과 (itemId=${itemId}):\n` +
           `itemCode=${data.itemCode}, itemName=${data.itemName}, currentQty=${data.currentQty}`
+      );
+    }
+
+    if (name === "list_categories") {
+      const data = await callInternalApi("/api/internal/categories");
+
+      if (data && data.error !== undefined) {
+        return textResult(
+          `카테고리 조회 중 오류가 발생했습니다 (error=${data.error}). 상세: ${data.detail}`
+        );
+      }
+
+      const categories = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.categories)
+        ? data.categories
+        : [];
+
+      if (categories.length === 0) {
+        return textResult("카테고리 없음");
+      }
+
+      // 부모-자식 트리 구성
+      const childrenByParent = new Map();
+      for (const cat of categories) {
+        const key = cat.parentId === null || cat.parentId === undefined ? "root" : cat.parentId;
+        if (!childrenByParent.has(key)) {
+          childrenByParent.set(key, []);
+        }
+        childrenByParent.get(key).push(cat);
+      }
+
+      const lines = [];
+      const renderTree = (parentKey, depth) => {
+        const children = childrenByParent.get(parentKey) || [];
+        for (const cat of children) {
+          lines.push(`${"  ".repeat(depth)}- ${cat.name} (id=${cat.id})`);
+          renderTree(cat.id, depth + 1);
+        }
+      };
+      renderTree("root", 0);
+
+      return textResult(
+        `카테고리 목록 (총 ${categories.length}개):\n` + lines.join("\n")
+      );
+    }
+
+    if (name === "list_inbound_lots") {
+      const itemId = args?.itemId;
+      if (typeof itemId !== "number" || Number.isNaN(itemId)) {
+        return textResult("오류: 'itemId'(품목 id)는 필수이며 숫자여야 합니다.");
+      }
+
+      const data = await callInternalApi(
+        `/api/internal/inbound-lots?itemId=${encodeURIComponent(itemId)}`
+      );
+
+      if (data && data.error !== undefined) {
+        return textResult(
+          `입고 잔여 조회 중 오류가 발생했습니다 (error=${data.error}). 상세: ${data.detail}`
+        );
+      }
+
+      const lots = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.lots)
+        ? data.lots
+        : [];
+
+      if (lots.length === 0) {
+        return textResult(`잔여 입고분 없음 (itemId=${itemId})`);
+      }
+
+      const hasValue = (v) => v !== null && v !== undefined && v !== "";
+
+      const lines = lots.map((lot) => {
+        let line = `- txNo=${lot.txNo}, 입고일=${lot.txDate}, 잔여=${lot.remainQty}, 위치=${lot.locationName}`;
+        if (hasValue(lot.unitPrice)) {
+          line += `, 단가=${lot.unitPrice}`;
+          if (hasValue(lot.currency)) {
+            line += ` ${lot.currency}`;
+          }
+        }
+        if (hasValue(lot.partnerName)) {
+          line += `, 거래처=${lot.partnerName}`;
+        }
+        if (hasValue(lot.memo)) {
+          line += `, 메모=${lot.memo}`;
+        }
+        return line;
+      });
+
+      const first = lots[0];
+      let header = `입고 건별 잔여 (itemId=${itemId}`;
+      if (hasValue(first.itemCode) || hasValue(first.itemName)) {
+        const codePart = hasValue(first.itemCode) ? first.itemCode : "";
+        const namePart = hasValue(first.itemName) ? first.itemName : "";
+        const label = [codePart, namePart].filter((p) => p !== "").join(" ");
+        header += `, ${label}`;
+      }
+      header += `, 총 ${lots.length}건):`;
+
+      return textResult(header + "\n" + lines.join("\n"));
+    }
+
+    if (name === "lookup_barcode") {
+      const code = args?.code;
+      if (typeof code !== "string" || code.trim() === "") {
+        return textResult("오류: 'code'(바코드)는 필수이며 비어 있을 수 없습니다.");
+      }
+
+      const data = await callInternalApi(
+        `/api/internal/barcode?code=${encodeURIComponent(code)}`
+      );
+
+      if (data && data.error !== undefined) {
+        if (data.error === 404) {
+          return textResult(`해당 바코드 없음 (code=${code})`);
+        }
+        return textResult(
+          `바코드 조회 중 오류가 발생했습니다 (error=${data.error}). 상세: ${data.detail}`
+        );
+      }
+
+      return textResult(
+        `바코드 조회 결과 (code=${code}):\n` +
+          `itemId=${data.itemId}, code=${data.itemCode}, name=${data.itemName}, category=${data.category}, 입고참조=${data.refTxNo}`
       );
     }
 
