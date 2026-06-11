@@ -139,6 +139,21 @@ const TOOLS = [
       "재고 입출고 시 사용하는 위치(창고/장소) 목록을 조회한다. 인자가 필요 없다. 사용자가 '본사', '공덕' 같은 위치 이름을 말하면 이 도구로 해당 위치의 id를 찾아라(입고/출고 처리에는 위치 이름이 아니라 위치 id가 필요하다). 예: '위치 목록 보여줘', 또는 입고 처리 전 위치 이름을 id로 변환할 때. 각 위치의 id와 이름을 반환한다.",
     inputSchema: { type: "object", properties: {}, required: [] },
   },
+  {
+    name: "list_items_by_category",
+    description:
+      "특정 카테고리(분류)에 속한 품목 목록을 조회한다. 사용자가 '가스에 뭐 있어?', '타겟 품목 보여줘', '기자재 종류' 처럼 분류 안의 품목들을 알고 싶어할 때 사용한다. 카테고리 이름(예: '가스', '타겟', '기자재/소모품', 'ALD')을 인자로 받는다. search_items는 품목 이름으로 검색하지만, 이 도구는 분류로 품목을 나열한다. 분류 이름을 모르면 list_categories로 먼저 확인하라. 각 품목의 id, 코드, 이름을 반환한다.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        category: {
+          type: "string",
+          description: "카테고리 이름",
+        },
+      },
+      required: ["category"],
+    },
+  },
 ];
 
 // 텍스트 응답 헬퍼
@@ -364,6 +379,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return textResult(
         `위치 목록 (총 ${locations.length}개):\n` + lines.join("\n")
       );
+    }
+
+    if (name === "list_items_by_category") {
+      const category = args?.category;
+      if (typeof category !== "string" || category.trim() === "") {
+        return textResult("카테고리 이름이 필요합니다");
+      }
+
+      const data = await callInternalApi(
+        `/api/internal/items?category=${encodeURIComponent(category)}`
+      );
+
+      if (data && data.error !== undefined) {
+        return textResult(
+          `카테고리별 품목 조회 중 오류가 발생했습니다 (error=${data.error}). 상세: ${data.detail}`
+        );
+      }
+
+      const items = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.items)
+        ? data.items
+        : [];
+
+      if (items.length === 0) {
+        return textResult(`'${category}' 분류에 품목이 없습니다.`);
+      }
+
+      const MAX = 50;
+      const shown = items.slice(0, MAX);
+      const lines = shown.map(
+        (it) => `- id=${it.id}, code=${it.code}, name=${it.name}`
+      );
+
+      let text = `'${category}' 분류 품목 (총 ${items.length}개):\n` + lines.join("\n");
+      if (items.length > MAX) {
+        text += `\n...외 ${items.length - MAX}개 더 있음`;
+      }
+
+      return textResult(text);
     }
 
     return textResult(`알 수 없는 도구: ${name}`);
