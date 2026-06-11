@@ -133,6 +133,12 @@ const TOOLS = [
       required: ["code"],
     },
   },
+  {
+    name: "list_locations",
+    description:
+      "재고 입출고 시 사용하는 위치(창고/장소) 목록을 조회한다. 인자가 필요 없다. 사용자가 '본사', '공덕' 같은 위치 이름을 말하면 이 도구로 해당 위치의 id를 찾아라(입고/출고 처리에는 위치 이름이 아니라 위치 id가 필요하다). 예: '위치 목록 보여줘', 또는 입고 처리 전 위치 이름을 id로 변환할 때. 각 위치의 id와 이름을 반환한다.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  },
 ];
 
 // 텍스트 응답 헬퍼
@@ -331,6 +337,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return textResult(
         `바코드 조회 결과 (code=${code}):\n` +
           `itemId=${data.itemId}, code=${data.itemCode}, name=${data.itemName}, category=${data.category}, 입고참조=${data.refTxNo}`
+      );
+    }
+
+    if (name === "list_locations") {
+      const data = await callInternalApi("/api/internal/locations");
+
+      if (data && data.error !== undefined) {
+        return textResult(
+          `위치 조회 중 오류가 발생했습니다 (error=${data.error}). 상세: ${data.detail}`
+        );
+      }
+
+      const locations = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.locations)
+        ? data.locations
+        : [];
+
+      if (locations.length === 0) {
+        return textResult("등록된 위치 없음");
+      }
+
+      const lines = locations.map((loc) => `- ${loc.name} (id=${loc.id})`);
+
+      return textResult(
+        `위치 목록 (총 ${locations.length}개):\n` + lines.join("\n")
       );
     }
 
