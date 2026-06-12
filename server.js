@@ -169,6 +169,27 @@ const TOOLS = [
       required: ["query"],
     },
   },
+  {
+    name: "search_users",
+    description:
+      "사내 사용자(직원)를 이름으로 검색한다. 재고 불출 시 '누구에게 불출하는지'(불출받는 사람)를 지정할 때 사용한다. 사용자가 사람 이름을 말하면 이 도구로 조회해 user id를 얻는다(불출 처리에는 이름이 아니라 user id가 필요하다). 각 사용자의 id와 name을 반환한다.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "사람 이름의 일부",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "list_tx_reasons",
+    description:
+      "재고 출고/불출 시 사용하는 사유 목록을 조회한다. 인자가 필요 없다. 사용자가 출고/불출 사유를 말하면 이 목록에서 맞는 사유의 id를 찾아라(처리에는 사유 이름이 아니라 사유 id가 필요하다). 각 사유의 id와 name을 반환한다.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  },
 ];
 
 // 텍스트 응답 헬퍼
@@ -461,6 +482,55 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const lines = partners.map((p) => `id=${p.id}, name=${p.name}`);
       return textResult(
         `거래처 검색 결과 ${partners.length}건 (검색어: "${query}"):\n` + lines.join("\n")
+      );
+    }
+
+    if (name === "search_users") {
+      const query = args?.query;
+      if (typeof query !== "string" || query.trim() === "") {
+        return textResult("오류: 'query'(사람 이름)는 필수이며 비어 있을 수 없습니다.");
+      }
+
+      const data = await callInternalApi(
+        `/api/internal/users?search=${encodeURIComponent(query)}`
+      );
+
+      if (data && data.error !== undefined) {
+        return textResult(
+          `사용자 검색 중 오류가 발생했습니다 (error=${data.error}). 상세: ${data.detail}`
+        );
+      }
+
+      const users = Array.isArray(data) ? data : Array.isArray(data?.users) ? data.users : [];
+
+      if (users.length === 0) {
+        return textResult(`사용자 검색 결과 없음 (검색어: "${query}")`);
+      }
+
+      const lines = users.map((u) => `id=${u.id}, name=${u.name}`);
+      return textResult(
+        `사용자 검색 결과 ${users.length}건 (검색어: "${query}"):\n` + lines.join("\n")
+      );
+    }
+
+    if (name === "list_tx_reasons") {
+      const data = await callInternalApi("/api/internal/tx-reasons");
+
+      if (data && data.error !== undefined) {
+        return textResult(
+          `사유 조회 중 오류가 발생했습니다 (error=${data.error}). 상세: ${data.detail}`
+        );
+      }
+
+      const reasons = Array.isArray(data) ? data : Array.isArray(data?.reasons) ? data.reasons : [];
+
+      if (reasons.length === 0) {
+        return textResult("등록된 사유 없음");
+      }
+
+      const lines = reasons.map((r) => `id=${r.id}, name=${r.name}`);
+      return textResult(
+        `출고/불출 사유 목록 (총 ${reasons.length}개):\n` + lines.join("\n")
       );
     }
 
