@@ -154,6 +154,21 @@ const TOOLS = [
       required: ["category"],
     },
   },
+  {
+    name: "search_partners",
+    description:
+      "거래처(공급처/고객)를 이름으로 검색한다. 예: '한국가스', 'OO상사'. 거래처의 id와 name을 반환한다. 입고/출고 처리 시 거래처 이름을 id로 변환할 때 사용한다(처리에는 거래처 이름이 아니라 거래처 id가 필요하다). 거래처 이름 일부만으로도 검색된다.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "거래처 이름의 일부",
+        },
+      },
+      required: ["query"],
+    },
+  },
 ];
 
 // 텍스트 응답 헬퍼
@@ -419,6 +434,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       return textResult(text);
+    }
+
+    if (name === "search_partners") {
+      const query = args?.query;
+      if (typeof query !== "string" || query.trim() === "") {
+        return textResult("오류: 'query'(거래처 이름)는 필수이며 비어 있을 수 없습니다.");
+      }
+
+      const data = await callInternalApi(
+        `/api/internal/partners?search=${encodeURIComponent(query)}`
+      );
+
+      if (data && data.error !== undefined) {
+        return textResult(
+          `거래처 검색 중 오류가 발생했습니다 (error=${data.error}). 상세: ${data.detail}`
+        );
+      }
+
+      const partners = Array.isArray(data) ? data : Array.isArray(data?.partners) ? data.partners : [];
+
+      if (partners.length === 0) {
+        return textResult(`거래처 검색 결과 없음 (검색어: "${query}")`);
+      }
+
+      const lines = partners.map((p) => `id=${p.id}, name=${p.name}`);
+      return textResult(
+        `거래처 검색 결과 ${partners.length}건 (검색어: "${query}"):\n` + lines.join("\n")
+      );
     }
 
     return textResult(`알 수 없는 도구: ${name}`);
